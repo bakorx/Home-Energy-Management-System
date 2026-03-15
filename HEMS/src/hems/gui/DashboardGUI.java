@@ -6,47 +6,113 @@ import javax.swing.table.*;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 public class DashboardGUI extends JFrame {
 
+    // Consumption panel
     private DefaultTableModel applianceTableModel;
     private JLabel totalWattsLabel, loadPctLabel;
     private JProgressBar loadBar;
+
+    // Scheduler panel
     private JLabel tariffBadge;
     private DefaultListModel<String> deferredListModel;
+
+    // Grid panel
     private final Map<String, JLabel> gridBulbs = new LinkedHashMap<>();
     private JLabel outageLabel;
+
+    // Alert panel
     private JTextArea alertArea;
     private JLabel alertCountLabel, overloadCountLabel, reportCountLabel;
+
+    // Log panel
     private JTextArea logArea;
+
+    // Controls panel
+    private JSlider speedSlider;
+    private JLabel speedLabel;
+    private final Map<String, JToggleButton> applianceButtons = new LinkedHashMap<>();
+
+    // Callbacks to agents — set by ConsumptionMonitorAgent after startup
+    private Consumer<String[]> onApplianceToggle;   // appliance name, "ON"/"OFF"
+    private Runnable onOutageTriggered;
+    private Runnable onReset;
+    private Consumer<Integer> onSpeedChanged;        // interval in ms
 
     public DashboardGUI() {
         setTitle("HEMS — Home Energy Management System");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1100, 720);
-        setLayout(new BorderLayout(8, 8));
+        setSize(1200, 780);
+        setLayout(new BorderLayout(6, 6));
         getContentPane().setBackground(new Color(245, 245, 248));
 
-        JLabel title = new JLabel("  Home Energy Management System");
-        title.setFont(new Font("SansSerif", Font.BOLD, 18));
-        title.setForeground(new Color(30, 30, 50));
-        title.setBorder(new EmptyBorder(10, 10, 6, 0));
-        title.setBackground(new Color(235, 235, 245));
-        title.setOpaque(true);
-        add(title, BorderLayout.NORTH);
+        add(buildTitleBar(),   BorderLayout.NORTH);
+        add(buildMainGrid(),   BorderLayout.CENTER);
+        add(buildBottomArea(), BorderLayout.SOUTH);
 
+        setLocationRelativeTo(null);
+        setVisible(true);
+    }
+
+    // ── Agent callback registration ──
+
+    public void setOnApplianceToggle(Consumer<String[]> cb)  { this.onApplianceToggle = cb; }
+    public void setOnOutageTriggered(Runnable cb)            { this.onOutageTriggered = cb; }
+    public void setOnReset(Runnable cb)                      { this.onReset = cb; }
+    public void setOnSpeedChanged(Consumer<Integer> cb)      { this.onSpeedChanged = cb; }
+
+    // ── Build UI ──
+
+    private JPanel buildTitleBar() {
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setBackground(new Color(40, 50, 100));
+        bar.setBorder(new EmptyBorder(8, 12, 8, 12));
+
+        JLabel title = new JLabel("Home Energy Management System  |  DCIT 403 Agent Simulation");
+        title.setFont(new Font("SansSerif", Font.BOLD, 16));
+        title.setForeground(Color.WHITE);
+        bar.add(title, BorderLayout.WEST);
+
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        btns.setOpaque(false);
+
+        JButton outageBtn = controlButton("Simulate Outage", new Color(200, 60, 40));
+        outageBtn.addActionListener(e -> {
+            if (onOutageTriggered != null) onOutageTriggered.run();
+        });
+
+        JButton resetBtn = controlButton("Reset Simulation", new Color(80, 80, 160));
+        resetBtn.addActionListener(e -> {
+            if (onReset != null) onReset.run();
+        });
+
+        btns.add(outageBtn);
+        btns.add(resetBtn);
+        bar.add(btns, BorderLayout.EAST);
+        return bar;
+    }
+
+    private JPanel buildMainGrid() {
         JPanel main = new JPanel(new GridLayout(2, 2, 8, 8));
-        main.setBorder(new EmptyBorder(6, 8, 4, 8));
+        main.setBorder(new EmptyBorder(8, 8, 4, 8));
         main.setBackground(new Color(245, 245, 248));
         main.add(buildConsumptionPanel());
         main.add(buildGridPanel());
         main.add(buildSchedulerPanel());
         main.add(buildAlertPanel());
-        add(main, BorderLayout.CENTER);
-        add(buildLogPanel(), BorderLayout.SOUTH);
+        return main;
+    }
 
-        setLocationRelativeTo(null);
-        setVisible(true);
+    private JPanel buildBottomArea() {
+        JPanel bottom = new JPanel(new BorderLayout(6, 6));
+        bottom.setBackground(new Color(245, 245, 248));
+        bottom.setBorder(new EmptyBorder(0, 8, 8, 8));
+        bottom.add(buildControlsPanel(), BorderLayout.NORTH);
+        bottom.add(buildLogPanel(),      BorderLayout.CENTER);
+        return bottom;
     }
 
     private JPanel buildConsumptionPanel() {
@@ -55,11 +121,11 @@ public class DashboardGUI extends JFrame {
 
         JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         top.setOpaque(false);
-        totalWattsLabel = badge("0 W", new Color(60, 80, 180));
-        loadPctLabel    = badge("0%", new Color(40, 130, 80));
+        totalWattsLabel = badge("0 W",  new Color(60, 80, 180));
+        loadPctLabel    = badge("0%",   new Color(40, 130, 80));
         top.add(new JLabel("Total load:"));
         top.add(totalWattsLabel);
-        top.add(new JLabel("  Capacity:"));
+        top.add(new JLabel("  Capacity used:"));
         top.add(loadPctLabel);
         p.add(top, BorderLayout.NORTH);
 
@@ -80,7 +146,7 @@ public class DashboardGUI extends JFrame {
         table.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 12));
         table.getColumnModel().getColumn(2).setCellRenderer(new StatusCellRenderer());
         JScrollPane sp = new JScrollPane(table);
-        sp.setPreferredSize(new Dimension(0, 200));
+        sp.setPreferredSize(new Dimension(0, 180));
         p.add(sp, BorderLayout.SOUTH);
         return p;
     }
@@ -107,7 +173,7 @@ public class DashboardGUI extends JFrame {
             lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
             lbl.setBorder(BorderFactory.createCompoundBorder(
                 new LineBorder(new Color(200, 200, 210), 1, true),
-                new EmptyBorder(6, 4, 6, 4)));
+                new EmptyBorder(8, 4, 8, 4)));
             gridBulbs.put(name, lbl);
             grid.add(lbl);
         }
@@ -126,7 +192,7 @@ public class DashboardGUI extends JFrame {
         top.add(tariffBadge);
         p.add(top, BorderLayout.NORTH);
 
-        JPanel mid = new JPanel(new BorderLayout());
+        JPanel mid = new JPanel(new BorderLayout(4, 4));
         mid.setOpaque(false);
         mid.setBorder(new EmptyBorder(4, 4, 4, 4));
         JLabel lbl = new JLabel("Deferred appliances:");
@@ -148,9 +214,9 @@ public class DashboardGUI extends JFrame {
 
         JPanel stats = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         stats.setOpaque(false);
-        alertCountLabel    = badge("0 total", new Color(80, 80, 180));
+        alertCountLabel    = badge("0 total",     new Color(80, 80, 180));
         overloadCountLabel = badge("0 overloads", new Color(200, 80, 40));
-        reportCountLabel   = badge("0 reports", new Color(40, 130, 80));
+        reportCountLabel   = badge("0 reports",   new Color(40, 130, 80));
         stats.add(alertCountLabel);
         stats.add(overloadCountLabel);
         stats.add(reportCountLabel);
@@ -165,13 +231,81 @@ public class DashboardGUI extends JFrame {
         return p;
     }
 
+    private JPanel buildControlsPanel() {
+        JPanel p = new JPanel(new BorderLayout(8, 4));
+        p.setBackground(new Color(238, 240, 255));
+        p.setBorder(BorderFactory.createCompoundBorder(
+            new LineBorder(new Color(180, 185, 230), 1, true),
+            new EmptyBorder(8, 10, 8, 10)));
+
+        JLabel heading = new JLabel("Manual Controls  —  toggle any appliance or adjust simulation speed");
+        heading.setFont(new Font("SansSerif", Font.BOLD, 12));
+        heading.setForeground(new Color(40, 40, 100));
+        p.add(heading, BorderLayout.NORTH);
+
+        // Appliance toggle buttons
+        JPanel toggles = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        toggles.setOpaque(false);
+        for (String name : Arrays.asList(
+                "AC","WaterHeater","WashingMachine","Oven","TV","Fridge","Lights")) {
+            JToggleButton btn = new JToggleButton(name, true);
+            btn.setFont(new Font("SansSerif", Font.PLAIN, 11));
+            btn.setBackground(new Color(60, 180, 100));
+            btn.setForeground(Color.WHITE);
+            btn.setFocusPainted(false);
+            btn.setBorder(new EmptyBorder(4, 8, 4, 8));
+            btn.setOpaque(true);
+            btn.addActionListener(e -> {
+                boolean on = btn.isSelected();
+                btn.setBackground(on ? new Color(60, 180, 100) : new Color(200, 70, 60));
+                btn.setText(name);
+                if (onApplianceToggle != null)
+                    onApplianceToggle.accept(new String[]{name, on ? "ON" : "OFF"});
+            });
+            applianceButtons.put(name, btn);
+            toggles.add(btn);
+        }
+
+        // Speed slider
+        JPanel speedPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        speedPanel.setOpaque(false);
+        speedLabel = new JLabel("Speed: Normal (3s)");
+        speedLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        speedLabel.setForeground(new Color(40, 40, 100));
+        speedSlider = new JSlider(1, 5, 3);
+        speedSlider.setMajorTickSpacing(1);
+        speedSlider.setPaintTicks(true);
+        speedSlider.setSnapToTicks(true);
+        speedSlider.setOpaque(false);
+        speedSlider.setPreferredSize(new Dimension(140, 30));
+        speedSlider.addChangeListener(e -> {
+            int val = speedSlider.getValue();
+            int[] intervals = {500, 1000, 3000, 5000, 8000};
+            String[] labels  = {"Very Fast (0.5s)", "Fast (1s)", "Normal (3s)", "Slow (5s)", "Very Slow (8s)"};
+            int interval = intervals[val - 1];
+            speedLabel.setText("Speed: " + labels[val - 1]);
+            if (!speedSlider.getValueIsAdjusting() && onSpeedChanged != null)
+                onSpeedChanged.accept(interval);
+        });
+        speedPanel.add(new JLabel("Sim speed:"));
+        speedPanel.add(speedSlider);
+        speedPanel.add(speedLabel);
+
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+        row.add(toggles,    BorderLayout.WEST);
+        row.add(speedPanel, BorderLayout.EAST);
+        p.add(row, BorderLayout.CENTER);
+        return p;
+    }
+
     private JPanel buildLogPanel() {
         JPanel p = new JPanel(new BorderLayout());
         p.setBorder(BorderFactory.createCompoundBorder(
-            new EmptyBorder(0, 8, 8, 8),
+            new EmptyBorder(4, 0, 0, 0),
             new TitledBorder("System Log — ACL Message Activity")));
         p.setBackground(new Color(245, 245, 248));
-        p.setPreferredSize(new Dimension(0, 120));
+        p.setPreferredSize(new Dimension(0, 110));
         logArea = new JTextArea();
         logArea.setEditable(false);
         logArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
@@ -209,6 +343,15 @@ public class DashboardGUI extends JFrame {
             } else {
                 loadBar.setForeground(new Color(40, 160, 80));
                 loadPctLabel.setBackground(new Color(40, 130, 80));
+            }
+            // Sync toggle buttons with actual state
+            for (Map.Entry<String, Boolean> e : applianceOn.entrySet()) {
+                JToggleButton btn = applianceButtons.get(e.getKey());
+                if (btn != null) {
+                    btn.setSelected(e.getValue());
+                    btn.setBackground(e.getValue()
+                        ? new Color(60, 180, 100) : new Color(200, 70, 60));
+                }
             }
         });
     }
@@ -265,6 +408,8 @@ public class DashboardGUI extends JFrame {
         });
     }
 
+    // ── Helpers ──
+
     private JPanel card(String title) {
         JPanel p = new JPanel();
         p.setBackground(Color.WHITE);
@@ -284,6 +429,17 @@ public class DashboardGUI extends JFrame {
         lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
         lbl.setBorder(new EmptyBorder(2, 8, 2, 8));
         return lbl;
+    }
+
+    private JButton controlButton(String text, Color bg) {
+        JButton btn = new JButton(text);
+        btn.setBackground(bg);
+        btn.setForeground(Color.WHITE);
+        btn.setFont(new Font("SansSerif", Font.BOLD, 12));
+        btn.setFocusPainted(false);
+        btn.setBorder(new EmptyBorder(6, 14, 6, 14));
+        btn.setOpaque(true);
+        return btn;
     }
 
     static class StatusCellRenderer extends DefaultTableCellRenderer {
