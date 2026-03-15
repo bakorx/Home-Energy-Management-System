@@ -10,30 +10,79 @@ import java.util.*;
 public class ConsumptionMonitorAgent extends Agent {
 
     public static final String NAME = "ConsumptionMonitor";
+
     private final Map<String, Double> appliances = new LinkedHashMap<>();
     private final Map<String, Boolean> applianceOn = new LinkedHashMap<>();
     private double totalCapacityWatts = 3000.0;
     private double overloadThresholdPct = 0.80;
     private DashboardGUI gui;
     private int tick = 0;
+    private int tickInterval = 3000; // ms — controlled by speed slider
+    private TickerBehaviour tickerBehaviour;
 
     @Override
     protected void setup() {
         Object[] args = getArguments();
         if (args != null && args.length > 0) gui = (DashboardGUI) args[0];
 
-        appliances.put("AC",              1200.0);
-        appliances.put("WaterHeater",      800.0);
-        appliances.put("WashingMachine",   500.0);
-        appliances.put("Oven",             600.0);
-        appliances.put("TV",               150.0);
-        appliances.put("Fridge",           180.0);
-        appliances.put("Lights",            80.0);
+        appliances.put("AC",             1200.0);
+        appliances.put("WaterHeater",     800.0);
+        appliances.put("WashingMachine",  500.0);
+        appliances.put("Oven",            600.0);
+        appliances.put("TV",              150.0);
+        appliances.put("Fridge",          180.0);
+        appliances.put("Lights",           80.0);
 
         for (String a : appliances.keySet()) applianceOn.put(a, true);
-        log("Started. Monitoring " + appliances.size() + " appliances.");
 
-        addBehaviour(new TickerBehaviour(this, 3000) {
+        // Wire GUI callbacks
+        if (gui != null) {
+            // Manual appliance toggle from button
+            gui.setOnApplianceToggle(args2 -> {
+                String name = args2[0];
+                boolean on  = "ON".equals(args2[1]);
+                setAppliance(name, on);
+                addLog("Manual override: " + name + " -> " + (on ? "ON" : "OFF"));
+            });
+
+            // Simulate outage button
+            gui.setOnOutageTriggered(() -> {
+                addLog("MANUAL OUTAGE triggered from dashboard");
+                sendACL("GridAgent", ACLMessage.REQUEST, "OUTAGE:manual");
+                sendACL("AlertAgent", ACLMessage.INFORM,
+                    "OUTAGE:Manual outage triggered from dashboard");
+            });
+
+            // Reset button — restart simulation state
+            gui.setOnReset(() -> {
+                tick = 0;
+                for (String a : appliances.keySet()) applianceOn.put(a, true);
+                double total = getTotalConsumption();
+                gui.updateConsumption(appliances, applianceOn, total,
+                    total / totalCapacityWatts);
+                sendACL("AlertAgent", ACLMessage.INFORM,
+                    "RESET:Simulation reset by user");
+                addLog("Simulation reset — all appliances restored");
+            });
+
+            // Speed slider — change tick interval
+            gui.setOnSpeedChanged(ms -> {
+                tickInterval = ms;
+                // Remove old behaviour and add new one with updated period
+                removeBehaviour(tickerBehaviour);
+                tickerBehaviour = buildTickerBehaviour();
+                addBehaviour(tickerBehaviour);
+                addLog("Simulation speed changed to " + ms + "ms per tick");
+            });
+        }
+
+        log("Started. Monitoring " + appliances.size() + " appliances.");
+        tickerBehaviour = buildTickerBehaviour();
+        addBehaviour(tickerBehaviour);
+    }
+
+    private TickerBehaviour buildTickerBehaviour() {
+        return new TickerBehaviour(this, tickInterval) {
             @Override
             protected void onTick() {
                 tick++;
@@ -58,7 +107,7 @@ public class ConsumptionMonitorAgent extends Agent {
                         "USAGE_REPORT:" + total + ":" + tick);
                 }
             }
-        });
+        };
     }
 
     private void simulateUsageChanges() {
@@ -97,6 +146,10 @@ public class ConsumptionMonitorAgent extends Agent {
         msg.addReceiver(new AID(target, AID.ISLOCALNAME));
         msg.setContent(content);
         send(msg);
+    }
+
+    private void addLog(String msg) {
+        if (gui != null) gui.addLog("[ConsumptionMonitor] " + msg);
     }
 
     private void log(String msg) {

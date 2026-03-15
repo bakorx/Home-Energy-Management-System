@@ -1,0 +1,8 @@
+{
+    "java.project.sourcePaths": [
+        "HEMS\\src"
+    ],
+    "java.project.referencedLibraries": [
+        "HEMS\\lib\\jade.jar"
+    ]
+}
